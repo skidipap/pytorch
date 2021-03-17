@@ -134,7 +134,16 @@ Tensor data(const Tensor & self) {
 
 bool is_leaf(const Tensor & self) {
   if (impl::get_autograd_meta(self)) {
-    return impl::get_autograd_meta(self)->grad_fn_ == nullptr;
+    // view of normal (non-inference) tensor created in inference mode has
+    // autograd_meta->grad_fn == nullptr but it shouldn't be considered as leaf.
+    // Its autograd_meta->grad_fn is nullptr simply because it didn't go through
+    // VariableType kernel to set up grad_fn.
+    auto autograd_meta = impl::get_autograd_meta(self);
+    if (self.is_view()) {
+      auto diff_autograd_meta = static_cast<DifferentiableViewMeta*>(autograd_meta);
+      if (diff_autograd_meta->get_creation_meta() == CreationMeta::NO_VARIABLE_TYPE_VIEW) return false;
+    }
+    return autograd_meta->grad_fn_ == nullptr;
   } else {
     return true;
   }
@@ -196,6 +205,7 @@ void retain_grad(Tensor & self) {
 Tensor _fw_primal(const Tensor & self, int64_t level) {
   auto& self_ = unpack(self, "self", 0);
   std::shared_ptr<Identity> grad_fn;
+  assert_no_inference_tensor(self);
   if (compute_requires_grad( self )) {
     grad_fn = std::make_shared<Identity>();
     grad_fn->set_next_edges(collect_next_edges( self ));
@@ -233,6 +243,7 @@ Tensor & copy_(c10::DispatchKeySet ks, Tensor & self, const Tensor & src, bool n
   auto& src_ = unpack(src, "src", 1);
   std::shared_ptr<CopyBackwards> grad_fn;
   auto requires_grad = compute_requires_grad(self, src);
+  assert_no_inference_tensor(self, src);
   requires_grad &= isDifferentiableType(self.scalar_type());
   check_inplace(self, requires_grad);
   if (requires_grad) {
@@ -274,6 +285,7 @@ Tensor& resize_(
     IntArrayRef size,
     c10::optional<MemoryFormat> optional_memory_format) {
   auto& self_ = unpack(self, "self", 0);
+  assert_no_inference_tensor(self);
   if (self.requires_grad()) {
     AT_ERROR("cannot resize variables that require grad");
   }
@@ -295,6 +307,7 @@ Tensor& resize_as_(
     const Tensor& the_template,
     c10::optional<MemoryFormat> optional_memory_format) {
   auto& self_ = unpack(self, "self", 0);
+  assert_no_inference_tensor(self);
   auto& the_template_ = unpack(the_template, "the_template", 1);
   if (self.requires_grad()) {
     AT_ERROR("cannot resize variables that require grad");
@@ -313,6 +326,7 @@ Tensor& resize_as_(
 
 Tensor detach(const Tensor & self) {
   RECORD_FUNCTION("detach", std::vector<c10::IValue>({self}));
+  assert_no_inference_tensor(self);
   std::function<at::Tensor(const at::Tensor&)> func=nullptr;
   auto result = as_view(/* base */ self, /* output */ self, /* is_bw_differentiable */ false,
                         /* is_fw_differentiable */ true, /* view_func */ func, /* creation_meta */ CreationMeta::DEFAULT,
@@ -330,6 +344,7 @@ Tensor detach(const Tensor & self) {
 
 Tensor & detach_(Tensor & self) {
   RECORD_FUNCTION("detach_", std::vector<c10::IValue>({self}));
+  assert_no_inference_tensor(self);
   if (self.is_view()) {
     // NB: is_view() ==> get_autograd_meta()
     auto diff_view_meta = static_cast<torch::autograd::DifferentiableViewMeta*>(torch::autograd::impl::get_autograd_meta(self));

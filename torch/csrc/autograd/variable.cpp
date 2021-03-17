@@ -4,6 +4,7 @@
 #include <torch/csrc/autograd/edge.h>
 #include <torch/csrc/autograd/engine.h>
 #include <torch/csrc/autograd/function.h>
+#include <torch/csrc/autograd/InferenceMode.h>
 #include <torch/csrc/autograd/functions/accumulate_grad.h>
 #include <torch/csrc/autograd/functions/tensor.h>
 #include <torch/csrc/autograd/generated/Functions.h>
@@ -34,7 +35,7 @@ DifferentiableViewMeta::DifferentiableViewMeta(at::TensorImpl* self_impl,
     : AutogradMeta(self_impl),
       backward_info_(std::move(backward_info)),
       forward_info_(std::move(forward_info)),
-      creation_meta(creation_meta) {
+      creation_meta(InferenceMode::is_enabled() ? CreationMeta::NO_VARIABLE_TYPE_VIEW : creation_meta) {
   is_view_ = true;
   if (backward_info_.has_value()) {
     self_impl->set_version_counter(impl::version_counter(backward_info_.value().base_));
@@ -506,6 +507,10 @@ void handle_view_on_rebase(DifferentiableViewMeta* diff_view_meta, bool indirect
     if (grad_fn) {
       msg = c10::str("Output ", diff_view_meta->output_nr_, " of ", grad_fn->name(), " is a view and ",
                      modified_obj, " modified inplace.");
+    } else if (creation_meta == CreationMeta::NO_VARIABLE_TYPE_VIEW) {
+      TORCH_INTERNAL_ASSERT(indirect, "Direct inplace update to NO_VARIABLE_TYPE_VIEW tensor should've been blocked.");
+      msg = c10::str("A view of normal tensor was created in InferenceMode and ", modified_obj, " modified inplace in normal mode.");
+      TORCH_CHECK(false, msg);
     } else {
       msg = c10::str("A view was created in no_grad mode and ", modified_obj, " modified inplace with grad mode enabled.");
     }
