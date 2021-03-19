@@ -177,6 +177,11 @@ class _DataPipeType:
             return self.param == other.param
         return NotImplementedError
 
+    def issubtype(self, other):
+        if not isinstance(other, _DataPipeType):
+            raise TypeError("Expected '_DataPipeType', but found {}".format(type(other)))
+        return issubtype(self.param, other.param)
+
 
 # Mimic generic typing as _GenericAlias (introduced in Python3.7)
 class _DataPipeAlias:
@@ -235,8 +240,8 @@ class _DataPipeAlias:
             init_fn = sub_cls.__dict__['__init__']
 
             def new_init(self, *args, **kwargs):
-                init_fn(self, *args, **kwargs)
                 self.type = copy.deepcopy(self.type)
+                init_fn(self, *args, **kwargs)
         else:
             def new_init(self, *args, **kwargs):
                 self.type = copy.deepcopy(self.type)
